@@ -7,6 +7,12 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Дед Мороз</title>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Ролл-Экспресс">
+<meta property="og:title" content="🎅 Жми и играй — Дед Мороз!">
+<meta property="og:description" content="Развези подарки по трубам за Деда Мороза. Игра от Ролл-Экспресс.">
+<meta property="og:url" content="https://kompman77-cpu.github.io/moroz/moroz.html">
+<meta property="og:image" content="https://kompman77-cpu.github.io/moroz/og.png">
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;background:#0a1030;touch-action:none;
@@ -795,15 +801,13 @@ const MAX_GROUP='https://web.max.ru/-70889239958868';   // ← ссылка на
 
 document.getElementById('tgBtn').addEventListener('click',e=>{
  e.stopPropagation();
- const text='Я доставил '+delivered+' подарков и набрал '+score+
-  ' очков в Дед Мороз от Ролл-Экспресс! Побьёшь мой рекорд? 🎅 '+TG_GROUP;
+ const text='Жми и играй! Я набрал '+score+' очков в Дед Мороз от Ролл-Экспресс 🎅 Побьёшь мой рекорд?\n\nПодпишись — не пропусти скидки и акции 👇 '+TG_GROUP;
  location.href='https://t.me/share/url?url='+encodeURIComponent(GAME_URL)+
   '&text='+encodeURIComponent(text);
 });
 document.getElementById('maxBtn').addEventListener('click',e=>{
  e.stopPropagation();
- const text='Я доставил '+delivered+' подарков и набрал '+score+
-  ' очков в Дед Мороз от Ролл-Экспресс! Побьёшь мой рекорд? 🎅 '+GAME_URL+' | Группа: '+MAX_GROUP;
+ const text='Жми и играй! Я набрал '+score+' очков в Дед Мороз от Ролл-Экспресс 🎅 '+GAME_URL+'\n\nПодпишись — не пропусти скидки и акции 👇 '+MAX_GROUP;
  location.href='https://max.ru/:share?text='+encodeURIComponent(text);
 });
 
