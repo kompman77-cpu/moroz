@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Дед Мороз</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#0a1030;touch-action:none;
+ -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;
+ font-family:'Comic Sans MS','Chalkboard SE','Segoe UI',sans-serif}
+canvas{position:fixed;inset:0;display:block}
+.ov{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;
+ gap:14px;padding:24px calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+ text-align:center;background:rgba(10,14,50,.72)}
+.ov.hide{display:none}
+.ov h1{color:#fff;margin:0;font-size:clamp(26px,7.5vw,46px);line-height:1.15;
+ text-shadow:0 3px 0 #a01515,0 8px 18px rgba(0,0,0,.55)}
+.ov p{color:#dbe6ff;margin:0;font-size:clamp(15px,4vw,20px);max-width:34em;line-height:1.45}
+.btn{font:inherit;font-weight:700;font-size:clamp(17px,4.5vw,22px);color:#fff;cursor:pointer;
+ background:linear-gradient(#ff5252,#c62828);border:3px solid #7f1010;border-radius:16px;padding:14px 30px;
+ box-shadow:0 5px 0 #7f1010,0 10px 22px rgba(0,0,0,.45)}
+.btn:active{transform:translateY(3px);box-shadow:0 2px 0 #7f1010}
+.btn2{font:inherit;font-weight:700;font-size:clamp(15px,4vw,19px);color:#fff;cursor:pointer;
+ border:3px solid #0b3a63;border-radius:14px;padding:11px 22px;margin-top:4px;width:min(86vw,340px)}
+#tgBtn{background:linear-gradient(#3ba3e8,#226fae)}
+#maxBtn{background:linear-gradient(#7d5cff,#5433d6)}
+a.site{color:#ffd66b;font-size:clamp(15px,4vw,19px);text-decoration:none;border-bottom:2px dashed #ffd66b;padding-bottom:2px}
+#sndBtn{position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));
+ z-index:20;width:46px;height:46px;border-radius:50%;border:3px solid #7f1010;background:rgba(255,255,255,.92);
+ font-size:20px;line-height:1;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="sndBtn" title="Звук">🔊</button>
+
+<div id="menu" class="ov">
+ <h1>🎅 Дед Мороз</h1>
+ <p>Тапни по экрану — подарок падает вниз. Попадай точно в трубу: в доме загорается свет! Мимо — окно гаснет…<br>
+ Три ночи: 10, 50 и 100 подарков. Ветер, чайка и коты не дремлют 😼</p>
+ <button class="btn" id="startBtn">Играть!</button>
+ <a class="site" href="https://xn----jtbocaqlcgida3m.xn--p1ai" target="_blank" rel="noopener">ролл-экспресс.рф</a>
+</div>
+
+<div id="win" class="ov hide">
+ <h1>Все подарки развезены! 🎉</h1>
+ <p id="winText"></p>
+ <button class="btn" id="againBtn">Играть заново</button>
+ <button class="btn2" id="tgBtn">✈️ Поделиться в Telegram</button>
+ <button class="btn2" id="maxBtn">💬 Поделиться в MAX</button>
+ <a class="site" href="https://xn----jtbocaqlcgida3m.xn--p1ai" target="_blank" rel="noopener">ролл-экспресс.рф</a>
+</div>
+
+<script>
+'use strict';
+/* ================= ЧАСТЬ 1: каркас, утилиты, звук ================= */
+const cvs=document.getElementById('game'),ctx=cvs.getContext('2d');
+let W=innerWidth,H=innerHeight,DPR=1,groundY=0,S=1;
+function resize(){
+ DPR=Math.min(window.devicePixelRatio||1,2);
+ W=window.innerWidth;H=window.innerHeight;
+ cvs.width=Math.round(W*DPR);cvs.height=Math.round(H*DPR);
+ cvs.style.width=W+'px';cvs.style.height=H+'px';
+ ctx.setTransform(DPR,0,0,DPR,0,0);
+ groundY=Math.round(H*0.84);
+ S=Math.max(0.7,Math.min(W/420,1.5));
+}
+window.addEventListener('resize',resize);resize();
+
+const TAU=Math.PI*2;
+const R=(a,b)=>a+Math.random()*(b-a);
+const RI=(a,b)=>Math.floor(R(a,b+1));
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const lerp=(a,b,k)=>a+(b-a)*k;
+const hs=n=>{n=Math.sin(n*127.1)*43758.5453;return n-Math.floor(n);};
+const pick=a=>a[RI(0,a.length-1)];
+
+/* ---------- состояние ---------- */
+let state='menu',levelIdx=0,level=null,bag=0,delivered=0,score=0,combo=0,stolen=0,bannerT=0,shake=0;
+let houses=[],gifts=[],parts=[],flyers=[],snow=[],toasts=[],smokes=[];
+let scroll=0,wind=0,windTarget=0,windTimer=1,tm=0,last=0;
+
+/* ---------- звук (синтез, без файлов) ---------- */
+let AC=null,muted=false,musicTimer=null,step=0;
+function audio(){
+ if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return null;}}
+ if(AC&&AC.state==='suspended')AC.resume();
+ return AC;
+}
+function tone(f,dur,type,vol,slideTo){
+ if(muted||!AC)return;
+ const t0=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();
+ o.type=type||'sine';o.frequency.setValueAtTime(f,t0);
+ if(slideTo)o.frequency.exponentialRampToValueAtTime(Math.max(30,slideTo),t0+dur);
+ g.gain.setValueAtTime(vol||0.2,t0);g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+ o.connect(g);g.connect(AC.destination);o.start(t0);o.stop(t0+dur+0.05);
+}
+function bell(f,vol,dur){tone(f,dur||1.1,'sine',vol||0.12);tone(f*2.756,(dur||1.1)*0.6,'sine',(vol||0.12)*0.35);}
+function noise(dur,vol,freq){
+ if(muted||!AC)return;
+ const t0=AC.currentTime,len=Math.max(1,Math.floor(AC.sampleRate*dur)),b=AC.createBuffer(1,len,AC.sampleRate),d=b.getChannelData(0);
+ for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*(1-i/len);
+ const s=AC.createBufferSource();s.buffer=b;
+ const g=AC.createGain();g.gain.value=vol||0.2;
+ const f=AC.createBiquadFilter();f.type='bandpass';f.frequency.value=freq||900;f.Q.value=0.8;
+ s.connect(f);f.connect(g);g.connect(AC.destination);s.start(t0);
+}
+const sfx={
+ drop(){tone(700,0.18,'sine',0.09,220);noise(0.15,0.07,500);},
+ hit(){bell(784,0.16);setTimeout(()=>bell(988,0.16),90);setTimeout(()=>bell(1319,0.2),180);},
+ miss(){tone(110,0.25,'triangle',0.22,60);noise(0.25,0.14,220);},
+ meow(){tone(620,0.14,'sawtooth',0.05,880);setTimeout(()=>tone(860,0.22,'sawtooth',0.05,520),140);},
+ flap(){for(let i=0;i<3;i++)setTimeout(()=>noise(0.05,0.1,1400),i*80);},
+ gull(){tone(950,0.22,'sawtooth',0.07,540);setTimeout(()=>tone(880,0.2,'sawtooth',0.06,500),240);},
+ fanfare(){[523,659,784,1047].forEach((f,i)=>setTimeout(()=>bell(f,0.18),i*140));},
+ boing(){tone(300,0.12,'square',0.04,180);},
+};
+const NOTE={C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,A5:880};
+const MELODY='E5 E5 E5 0 E5 E5 E5 0 E5 G5 C5 D5 E5 0 0 0 F5 F5 F5 F5 F5 E5 E5 E5 D5 D5 E5 D5 G5 0 0 E5 E5 E5 0 E5 E5 E5 0 E5 G5 C5 D5 E5 0 0 0 F5 F5 F5 F5 F5 E5 E5 G5 F5 D5 C5 0 0'
+ .split(' ').map(x=>NOTE[x]||0);
+function startMusic(){
+ if(musicTimer)return;
+ musicTimer=setInterval(()=>{
+  if(muted||!AC||state!=='play')return;
+  const f=MELODY[step%MELODY.length];
+  if(f)bell(f,0.05,0.5);
+  if(step%8===0)tone(step%16===0?196:262,0.4,'triangle',0.045);
+  step++;
+ },300);
+}
+document.getElementById('sndBtn').addEventListener('click',e=>{
+ e.stopPropagation();audio();muted=!muted;
+ e.currentTarget.textContent=muted?'🔇':'🔊';
+ if(!muted)sfx.boing();
+});
+/* ================= ЧАСТЬ 2: графика и персонажи ================= */
+
+/* ---------- мультяшные помощники ---------- */
+function rr(x,y,w,h,r){ // скруглённый прямоугольник
+ r=Math.min(r,w/2,h/2);
+ ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
+ ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
+}
+function blob(cx,cy,r,col){ // сугроб
+ ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(cx-r,cy);
+ ctx.bezierCurveTo(cx-r*0.5,cy-r*0.7,cx+r*0.5,cy-r*0.7,cx+r,cy);ctx.closePath();ctx.fill();
+}
+function star(cx,cy,r,tw){ // мерцающая звезда
+ const a=0.55+0.45*Math.sin(tw*3+cx);
+ ctx.globalAlpha=a;ctx.fillStyle='#fff8d8';
+ ctx.beginPath();ctx.arc(cx,cy,r*(0.8+0.3*Math.sin(tw*5+cy)),0,TAU);ctx.fill();
+ ctx.globalAlpha=1;
+}
+
+/* ---------- небо, луна, звёзды, снег ---------- */
+const stars=[];for(let i=0;i<90;i++)stars.push({x:Math.random(),y:Math.random()*0.55,r:R(0.6,1.8),ph:R(0,TAU)});
+const snowflakes=[];for(let i=0;i<70;i++)snowflakes.push({x:R(0,1),y:Math.random(),r:R(1.2,3.2),sp:R(0.4,1.1),ph:R(0,TAU)});
+
+function drawSky(){
+ const g=ctx.createLinearGradient(0,0,0,H);
+ g.addColorStop(0,'#0b1038');g.addColorStop(0.45,'#1b2a6b');g.addColorStop(0.8,'#3a3f8f');g.addColorStop(1,'#5a4a9c');
+ ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ // луна с кратерами и ореолом
+ const mx=W*0.82,my=H*0.14,mr=Math.min(W,H)*0.055;
+ const halo=ctx.createRadialGradient(mx,my,mr*0.4,mx,my,mr*3);
+ halo.addColorStop(0,'rgba(255,244,200,0.35)');halo.addColorStop(1,'rgba(255,244,200,0)');
+ ctx.fillStyle=halo;ctx.beginPath();ctx.arc(mx,my,mr*3,0,TAU);ctx.fill();
+ ctx.fillStyle='#fff6cf';ctx.beginPath();ctx.arc(mx,my,mr,0,TAU);ctx.fill();
+ ctx.fillStyle='rgba(210,190,150,0.5)';
+ [[0.3,-0.2,0.22],[ -0.35,0.15,0.15],[0.1,0.4,0.12]].forEach(c=>{
+  ctx.beginPath();ctx.arc(mx+c[0]*mr,my+c[1]*mr,c[2]*mr,0,TAU);ctx.fill();});
+ stars.forEach(s=>star(s.x*W,s.y*H,s.r,tm+s.ph));
+ // падающий снег с ветром
+ ctx.fillStyle='rgba(255,255,255,0.85)';
+ snowflakes.forEach(f=>{
+  f.y+=f.sp*0.0025;if(f.y>1){f.y=-0.02;f.x=Math.random();}
+  const wx=f.x*W+Math.sin(tm*0.8+f.ph)*12+wind*22;
+  ctx.beginPath();ctx.arc((wx%W+W)%W,f.y*H,f.r*S,0,TAU);ctx.fill();
+ });
+}
+
+/* ---------- дальний город и холмы (параллакс) ---------- */
+const bgCity=[];for(let i=0;i<26;i++)bgCity.push({x:i*R(90,180),w:R(45,95),h:R(50,130),win:Math.random()<0.5});
+const hills=[];for(let i=0;i<14;i++)hills.push({x:i*230,w:R(240,380),h:R(40,90)});
+
+function drawParallax(){
+ // дальний город
+ const off1=(scroll*0.25)%3400;
+ ctx.save();
+ bgCity.forEach(b=>{
+  let x=((b.x-off1)%3400+3400)%3400-200;
+  if(x>W+120)return;
+  ctx.fillStyle='#141a44';rr(x,groundY-b.h,b.w,b.h,4);ctx.fill();
+  if(b.win){
+   ctx.fillStyle='rgba(255,210,110,0.75)';
+   const wy=groundY-b.h+14;
+   for(let r=0;r<Math.floor(b.h/34);r++)for(let c=0;c<Math.floor(b.w/20);c++)
+    if(hs(b.x+r*7+c) > 0.62)ctx.fillRect(x+8+c*20,wy+r*34,8,10);
+  }
+  // ель-силуэт на крыше иногда
+  if(b.h>100){ctx.fillStyle='#10163a';
+   ctx.beginPath();ctx.moveTo(x+b.w/2,groundY-b.h-26);ctx.lineTo(x+b.w/2-9,groundY-b.h);
+   ctx.lineTo(x+b.w/2+9,groundY-b.h);ctx.closePath();ctx.fill();}
+ });
+ ctx.restore();
+ // холмы со снегом
+ const off2=(scroll*0.55)%3220;
+ hills.forEach(hl=>{
+  let x=((hl.x-off2)%3220+3220)%3220-300;
+  if(x>W+300)return;
+  ctx.fillStyle='#2a2f66';
+  ctx.beginPath();ctx.moveTo(x,groundY);
+  ctx.quadraticCurveTo(x+hl.w/2,groundY-hl.h,x+hl.w,groundY);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#3d4387';
+  ctx.beginPath();ctx.moveTo(x+hl.w*0.3,groundY-hl.h*0.72);
+  ctx.quadraticCurveTo(x+hl.w/2,groundY-hl.h*0.86,x+hl.w*0.7,groundY-hl.h*0.72);
+  ctx.quadraticCurveTo(x+hl.w/2,groundY-hl.h*0.62,x+hl.w*0.3,groundY-hl.h*0.72);ctx.fill();
+ });
+}
+
+/* ---------- домик ---------- */
+function makeHouse(x){
+ const h=R(55,85)*S,w=R(92,140)*S;
+ const hs2={x,w,h,col:pick(['#d84545','#3f7fc4','#c98f3d','#5aa06a','#a86bc9','#e0e0e0']),
+  roofCol:pick(['#7a3535','#34567a','#6b5530','#3f5a45']),
+  winLit:false,winMode:0,winT:0, // 0 тёмное, 1 радость, 2 грусть
+  gar:0,garPh:R(0,TAU),
+  pipe:{dx:R(0.3,0.7),w:16*S,h:R(26,40)*S,capW:24*S},
+  cat:Math.random()<0.4?{x:R(0.15,0.85),ph:R(0,TAU),panic:0}:null,
+  pigeons:Math.random()<0.5?RI(1,3):0,
+  door:Math.random()<0.8,chimSm:R(0,TAU)};
+ hs2.poff=hs2.w*hs2.pipe.dx-hs2.pipe.w/2;
+ return hs2;
+}
+function spawnHouses(){
+ houses=[];let x=100*S;
+ while(x<5200*S){houses.push(makeHouse(x));x+=R(190,320)*S;}
+}
+
+function drawHouse(h){
+ const x=h.x-scroll,y=groundY-h.h;
+ if(x+h.w<-80||x>W+80)return;
+ // корпус
+ ctx.fillStyle=h.col;rr(x,y,h.w,h.h,6*S);ctx.fill();
+ ctx.strokeStyle='rgba(30,20,40,0.85)';ctx.lineWidth=2.5*S;ctx.stroke();
+ // снежная шапка на стенах
+ ctx.fillStyle='#fff';rr(x-3,y-4,h.w+6,10*S,6*S);ctx.fill();
+ // крыша
+ const rw=h.w+26*S;
+ ctx.fillStyle=h.roofCol;
+ ctx.beginPath();ctx.moveTo(x-13*S,y);ctx.lineTo(x+h.w/2,y-34*S);ctx.lineTo(x+h.w+13*S,y);ctx.closePath();
+ ctx.fill();ctx.stroke();
+ // снег на крыше
+ ctx.fillStyle='#fff';
+ ctx.beginPath();ctx.moveTo(x-11*S,y-2*S);
+ ctx.quadraticCurveTo(x+h.w/2,y-38*S,x+h.w+11*S,y-2*S);
+ ctx.quadraticCurveTo(x+h.w/2,y-20*S,x-11*S,y-2*S);ctx.closePath();ctx.fill();
+ // сосульки
+ ctx.fillStyle='#cfe8ff';
+ for(let i=1;i<4;i++){const ix=x+i*h.w/4;
+  ctx.beginPath();ctx.moveTo(ix-4*S,y+2*S);ctx.lineTo(ix,y+2*S+R(8,13)*S);ctx.lineTo(ix+4*S,y+2*S);ctx.closePath();ctx.fill();}
+ // ТРУБА (ровно на скате, вертикально)
+ const p=h.pipe,px=x+h.poff,py=y-20*S;
+ ctx.fillStyle='#9c4a3c';
+ rr(px,py-p.h,p.w,p.h+6*S,3*S);ctx.fill();ctx.stroke();
+ // кирпичики
+ ctx.strokeStyle='rgba(60,25,20,0.5)';ctx.lineWidth=1.2*S;
+ for(let by=py-p.h+6*S;by<py;by+=8*S){ctx.beginPath();ctx.moveTo(px+2,by);ctx.lineTo(px+p.w-2,by);ctx.stroke();}
+ // устье
+ ctx.fillStyle='#2b1a16';
+ rr(px+2*S,py-p.h,p.w-4*S,7*S,3*S);ctx.fill();
+ // снежная шапка на трубе
+ ctx.fillStyle='#fff';rr(px-2*S,py-p.h-5*S,p.w+4*S,7*S,4*S);ctx.fill();
+ // флажок-флюгер по ветру
+ const fx=px+p.w/2,fy=py-p.h-8*S;
+ ctx.strokeStyle='#5a3a2a';ctx.lineWidth=2*S;
+ ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx,fy-9*S);ctx.stroke();
+ const fl=clamp(wind*0.22,-1,1)*8*S;
+ ctx.fillStyle='#ffd23e';
+ ctx.beginPath();ctx.moveTo(fx,fy-9*S);ctx.lineTo(fx+fl+7*Math.sign(fl||1)*S,fy-6.5*S);ctx.lineTo(fx,fy-4*S);ctx.closePath();ctx.fill();
+ ctx.strokeStyle='rgba(30,20,40,0.85)';ctx.lineWidth=1.5*S;ctx.stroke();
+ // дым изгибается по ветру
+ h.chimSm+=0.02;
+ for(let i=0;i<3;i++){
+  const st=(tm*0.5+i*0.33+h.chimSm)%1;
+  ctx.globalAlpha=(1-st)*0.4;
+  ctx.fillStyle='#dfe6ff';
+  ctx.beginPath();
+  ctx.arc(fx+Math.sin(st*4)*4*S+wind*st*40*S,py-p.h-8*S-st*34*S,(3+st*6)*S,0,TAU);
+  ctx.fill();ctx.globalAlpha=1;
+ }
+ // ОКНО (индикатор: попал — светится, мимо — тёмное)
+ const wx=x+h.w*0.28,wy=y+h.h*0.32,ww=h.w*0.44,wh=h.h*0.36;
+ rr(wx,wy,ww,wh,4*S);ctx.stroke();
+ if(h.winMode===0){ctx.fillStyle='#1a2340';rr(wx,wy,ww,wh,4*S);ctx.fill();}
+ else if(h.winMode===1){ // радость: тёплое пульсирующее окно
+  const wg=ctx.createLinearGradient(0,wy,0,wy+wh);
+  wg.addColorStop(0,'#ffe9a8');wg.addColorStop(1,'#ffb84d');
+  ctx.fillStyle=wg;rr(wx,wy,ww,wh,4*S);ctx.fill();
+  const pulse=0.75+0.25*Math.sin(h.winT*4);
+  ctx.globalAlpha=pulse*0.5;ctx.fillStyle='#fff3c4';
+  rr(wx-3*S,wy-3*S,ww+6*S,wh+6*S,6*S);ctx.fill();ctx.globalAlpha=1;
+ }else{ // грусть: тёмное холодное окно
+  ctx.fillStyle='#2b3a66';rr(wx,wy,ww,wh,4*S);ctx.fill();
+ }
+ // рама
+ ctx.strokeStyle='#5a3a2a';ctx.lineWidth=2.5*S;
+ rr(wx,wy,ww,wh,4*S);ctx.stroke();
+ ctx.beginPath();ctx.moveTo(wx+ww/2,wy);ctx.lineTo(wx+ww/2,wy+wh);
+ ctx.moveTo(wx,wy+wh/2);ctx.lineTo(wx+ww,wy+wh/2);ctx.stroke();
+ // гирлянда по периметру крыши
+ if(h.gar>0){
+  const cols=['#ff4d4d','#ffd23e','#4dff88','#4dc3ff','#c86bff'];
+  ctx.lineWidth=3*S;
+  const pts=[[-13*S,6*S],[h.w/2,-32*S],[h.w+13*S,6*S]];
+  for(let i=0;i<12;i++){
+   const t=i/11;let px2,py2;
+   if(t<0.5){const tt=t*2;px2=x+lerp(pts[0][0],pts[1][0],tt);py2=y+lerp(pts[0][1],pts[1][1],tt);}
+   else{const tt=(t-0.5)*2;px2=x+lerp(pts[1][0],pts[2][0],tt);py2=y+lerp(pts[1][1],pts[2][1],tt);}
+   const on=(Math.floor(tm*4+i)%2===0);
+   ctx.fillStyle=cols[i%cols.length];
+   ctx.globalAlpha=h.gar*(on?1:0.35);
+   ctx.beginPath();ctx.arc(x+px2,y+py2+4*S,3.2*S,0,TAU);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+ }
+ // дверь с венком
+ if(h.door){
+  const dx2=x+h.w*0.12,dy2=y+h.h*0.62,dw2=h.w*0.2,dh2=h.h*0.38;
+  ctx.fillStyle='#6b3f22';rr(dx2,dy2,dw2,dh2,4*S);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#ffd23e';ctx.beginPath();ctx.arc(dx2+dw2*0.78,dy2+dh2*0.5,2.5*S,0,TAU);ctx.fill();
+  ctx.strokeStyle='#2f7a3a';ctx.lineWidth=3*S;
+  ctx.beginPath();ctx.arc(dx2+dw2/2,dy2-7*S,6*S,0,TAU);ctx.stroke();
+ }
+ // сугроб у дома
+ blob(x+h.w/2,groundY+4*S,h.w*0.7,'#fff');
+}
+
+/* ---------- КОТ на крыше ---------- */
+function drawCat(h){
+ const c=h.cat;if(!c)return;
+ const cx=h.x-scroll+h.w*c.x,cy=groundY-h.h-40*S;
+ if(cx<-60||cx>W+60)return;
+ const wig=Math.sin(tm*2+c.ph)*2*S;
+ ctx.save();ctx.translate(cx,cy);
+ ctx.strokeStyle='rgba(30,20,40,0.9)';ctx.lineWidth=2*S;
+ ctx.fillStyle=c.panic>0?'#ffd166':'#4a4a5a';
+ rr(-12*S,-8*S,24*S,14*S,6*S);ctx.fill();ctx.stroke(); // тело
+ ctx.beginPath();ctx.arc(10*S,-10*S+wig,7*S,0,TAU);ctx.fill();ctx.stroke(); // голова
+ ctx.beginPath();ctx.moveTo(5*S,-16*S);ctx.lineTo(7*S,-21*S);ctx.lineTo(9*S,-16*S);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.beginPath();ctx.moveTo(11*S,-16*S);ctx.lineTo(13*S,-21*S);ctx.lineTo(15*S,-16*S);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.fillStyle='#111';
+ const es=c.panic>0?3.2*S:2*S;
+ ctx.beginPath();ctx.arc(8*S,-10*S+wig,es,0,TAU);ctx.arc(12.5*S,-10*S+wig,es,0,TAU);ctx.fill();
+ // хвост
+ ctx.strokeStyle='#4a4a5a';ctx.lineWidth=3.5*S;
+ ctx.beginPath();ctx.moveTo(-11*S,0);
+ if(c.panic>0)ctx.quadraticCurveTo(-20*S,-14*S,-14*S,-22*S);
+ else ctx.quadraticCurveTo(-18*S,-4*S,-16*S,-12*S+wig);
+ ctx.stroke();
+ // дыбом встающая шерсть
+ if(c.panic>0){
+  ctx.strokeStyle='#4a4a5a';ctx.lineWidth=1.6*S;
+  for(let i=0;i<5;i++){const a=-0.9+i*0.35;
+   ctx.beginPath();ctx.moveTo(-8*S+i*4*S,-8*S);
+   ctx.lineTo(-8*S+i*4*S+Math.cos(a)*7*S,-8*S+Math.sin(a)*7*S);ctx.stroke();}
+ }
+ ctx.restore();
+ // мяу!
+ if(c.panic>0){
+  ctx.font=`${Math.round(11*S+Math.sin(tm*9)*2)}px Comic Sans MS, sans-serif`;
+  ctx.fillStyle='#fff';ctx.strokeStyle='#c62828';ctx.lineWidth=3*S;
+  const my=cy-26*S-Math.sin(tm*4)*3*S;
+  ctx.strokeText('МЯЯУ!',cx-14*S,my);ctx.fillText('МЯЯУ!',cx-14*S,my);
+ }
+}
+
+/* ---------- ГОЛУБИ на крыше ---------- */
+function drawPigeons(h){
+ if(!h.pigeons)return;
+ const bx=h.x-scroll+h.w*0.75,by=groundY-h.h-34*S;
+ if(bx<-60||bx>W+60)return;
+ for(let i=0;i<h.pigeons;i++){
+  const px=bx+i*14*S,py=by+Math.sin(tm*3+i)*2*S;
+  ctx.fillStyle='#8fa3c8';ctx.strokeStyle='rgba(30,20,40,0.9)';ctx.lineWidth=1.8*S;
+  ctx.save();ctx.translate(px,py);
+  ctx.beginPath();ctx.ellipse(0,0,8*S,6*S,0,0,TAU);ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.arc(6*S,-5*S,4*S,0,TAU);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#ffb347';ctx.beginPath();ctx.moveTo(9.5*S,-5*S);ctx.lineTo(13*S,-4*S);ctx.lineTo(9.5*S,-3*S);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#111';ctx.beginPath();ctx.arc(7*S,-6*S,1.2*S,0,TAU);ctx.fill();
+  ctx.restore();
+ }
+}
+
+/* ---------- чайка ---------- */
+let gull={x:0,y:0,active:false,vx:0,vy:0,wob:0,carrying:false,smile:0};
+function spawnGull(){
+ gull={x:W+80,y:R(H*0.12,H*0.45),active:true,vx:-(R(1.6,2.6))*S,vy:0,wob:R(0,TAU),carrying:false,smile:0};
+}
+function drawGull(){
+ if(!gull.active)return;
+ gull.wob+=0.06;
+ const gx=gull.x,gy=gull.y+Math.sin(gull.wob)*14*S;
+ const flap=Math.sin(tm*10)*1;
+ ctx.save();ctx.translate(gx,gy);
+ ctx.fillStyle='#f3f6ff';ctx.strokeStyle='#4a5580';ctx.lineWidth=2*S;
+ // крылья
+ ctx.beginPath();ctx.moveTo(0,0);
+ ctx.quadraticCurveTo(-16*S,-12*S-flap*6*S,-30*S,-2*S-flap*4*S);
+ ctx.quadraticCurveTo(-14*S,2*S,0,3*S);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.beginPath();ctx.moveTo(0,0);
+ ctx.quadraticCurveTo(-16*S,12*S+flap*6*S,-30*S,2*S+flap*4*S);
+ ctx.quadraticCurveTo(-14*S,-2*S,0,3*S);ctx.closePath();ctx.fill();ctx.stroke();
+ // тело и голова
+ ctx.beginPath();ctx.ellipse(4*S,0,10*S,5.5*S,0,0,TAU);ctx.fill();ctx.stroke();
+ ctx.beginPath();ctx.arc(12*S,-3*S,4.5*S,0,TAU);ctx.fill();ctx.stroke();
+ ctx.fillStyle='#ffb347';ctx.beginPath();ctx.moveTo(16*S,-3.5*S);ctx.lineTo(21*S,-2.5*S);ctx.lineTo(16*S,-1.5*S);ctx.closePath();ctx.fill();
+ ctx.fillStyle='#111';ctx.beginPath();ctx.arc(13*S,-4.2*S,1.4*S,0,TAU);ctx.fill();
+ // злорадная улыбка, когда несёт подарок
+ if(gull.carrying){
+  ctx.strokeStyle='#c62828';ctx.lineWidth=1.8*S;
+  ctx.beginPath();ctx.arc(13*S,-1*S,2.5*S,0.1,Math.PI-0.4);ctx.stroke();
+  // подарок в лапах
+  ctx.fillStyle='#e53935';rr(-2*S,6*S,12*S,9*S,2*S);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#ffd23e';ctx.fillRect(-2*S,9.5*S,12*S,2.2*S);
+ }
+ ctx.restore();
+}
+
+/* ---------- ДЕД МОРОЗ с упряжкой ---------- */
+let sledX=0;
+function drawSled(){
+  sledX=W/2;
+ const bob=Math.sin(tm*2.2)*10*S;
+ const y=H*0.16+bob;
+ const x=sledX,run=Math.sin(tm*6);
+ ctx.save();ctx.translate(x,y);
+ ctx.scale(-1,1); // разворот: олени впереди по курсу
+ // олени (3 штуки, впереди меньшие)
+ for(let i=0;i<3;i++){
+  const ox=-40*S-i*46*S,oy=6*S+(i===0?4*S:0),sc=1-i*0.12,lp=Math.sin(tm*8+i*2.1);
+  ctx.save();ctx.translate(ox,oy);ctx.scale(sc,sc);
+  ctx.strokeStyle='#8a5a34';ctx.lineWidth=4*S; // ноги
+  ctx.beginPath();
+  ctx.moveTo(-8*S,4*S);ctx.lineTo(-8*S+lp*6*S,16*S);
+  ctx.moveTo(8*S,4*S);ctx.lineTo(8*S-lp*6*S,16*S);ctx.stroke();
+  ctx.fillStyle='#a5713f';ctx.strokeStyle='rgba(40,25,15,0.9)';ctx.lineWidth=2*S;
+  ctx.beginPath();ctx.ellipse(0,0,20*S,9*S,-0.1,0,TAU);ctx.fill();ctx.stroke(); // тело
+  ctx.beginPath();ctx.ellipse(-20*S,-8*S,9*S,7*S,0.2,0,TAU);ctx.fill();ctx.stroke(); // шея-голова
+  // рога
+  ctx.strokeStyle='#6b4226';ctx.lineWidth=2.5*S;
+  ctx.beginPath();ctx.moveTo(-22*S,-14*S);ctx.quadraticCurveTo(-30*S,-24*S,-24*S,-28*S);
+  ctx.moveTo(-26*S,-20*S);ctx.lineTo(-32*S,-22*S);
+  ctx.moveTo(-19*S,-14*S);ctx.quadraticCurveTo(-13*S,-23*S,-17*S,-27*S);ctx.stroke();
+  // красный светящийся нос
+  ctx.fillStyle='#ff2e2e';
+  const glow=ctx.createRadialGradient(-28*S,-7*S,1,-28*S,-7*S,7*S);
+  glow.addColorStop(0,'rgba(255,60,60,0.9)');glow.addColorStop(1,'rgba(255,60,60,0)');
+  ctx.fillStyle=glow;ctx.beginPath();ctx.arc(-28*S,-7*S,7*S,0,TAU);ctx.fill();
+  ctx.fillStyle='#ff4040';ctx.beginPath();ctx.arc(-28*S,-7*S,2.6*S,0,TAU);ctx.fill();
+  // глаз и ухо
+  ctx.fillStyle='#222';ctx.beginPath();ctx.arc(-24*S,-10*S,1.4*S,0,TAU);ctx.fill();
+  ctx.strokeStyle='#8a5a34';ctx.lineWidth=2.5*S;
+  ctx.beginPath();ctx.moveTo(-16*S,-9*S);ctx.lineTo(-12*S,-15*S);ctx.stroke(); // ушко
+  // хвост
+  ctx.strokeStyle='#a5713f';ctx.beginPath();ctx.moveTo(19*S,-2*S);ctx.quadraticCurveTo(26*S,-6*S+run*3*S,28*S,-2*S);ctx.stroke();
+  ctx.restore();
+  // упряжь к саням
+  if(i<3){ctx.strokeStyle='#7a4a2a';ctx.lineWidth=2.5*S;
+   ctx.beginPath();ctx.moveTo(ox+14*S,oy);ctx.lineTo(ox+40*S,oy+4*S);ctx.stroke();}
+ }
+ // САНИ с золотой окантовкой
+ ctx.save();
+ ctx.strokeStyle='#3a2a1a';ctx.fillStyle='#8a4a2a';ctx.lineWidth=3*S;
+ rr(-14*S,8*S,44*S,18*S,5*S);ctx.fill();ctx.stroke(); // корпус
+ ctx.strokeStyle='#ffd23e';ctx.lineWidth=2*S;
+ rr(-12*S,10*S,40*S,14*S,4*S);ctx.stroke(); // золотая окантовка
+ ctx.strokeStyle='#3a2a1a';ctx.lineWidth=4*S; // полозья
+ ctx.beginPath();ctx.moveTo(-18*S,34*S);ctx.lineTo(38*S,34*S);
+ ctx.moveTo(-14*S,26*S);ctx.lineTo(-14*S,34*S);ctx.moveTo(34*S,26*S);ctx.lineTo(34*S,34*S);ctx.stroke();
+ // мешок с подарками
+ ctx.fillStyle='#2f7a3a';ctx.strokeStyle='rgba(20,40,20,0.9)';ctx.lineWidth=2.5*S;
+ ctx.beginPath();ctx.moveTo(-30*S,10*S);ctx.quadraticCurveTo(-40*S,-14*S,-22*S,-16*S);
+ ctx.quadraticCurveTo(-10*S,-16*S,-12*S,10*S);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.fillStyle='#e53935';rr(-27*S,-4*S,8*S,7*S,1.5*S);ctx.fill();
+ ctx.fillStyle='#4dc3ff';rr(-19*S,-8*S,7*S,6*S,1.5*S);ctx.fill();
+ ctx.restore();
+ // ДЕД МОРОЗ (машет рукой)
+ ctx.save();ctx.translate(16*S,6*S);
+ const wave=Math.sin(tm*7)*0.6;
+ ctx.strokeStyle='#e53935';ctx.lineWidth=3*S;ctx.lineCap='round';
+ rr(-10*S,-8*S,20*S,22*S,8*S);ctx.fillStyle='#e53935';ctx.fill();ctx.strokeStyle='rgba(60,10,10,0.9)';ctx.lineWidth=2.5*S;ctx.stroke();
+ ctx.fillStyle='#f3e6d8';ctx.beginPath();ctx.arc(0,-14*S,9*S,0,TAU);ctx.fill();ctx.stroke(); // лицо
+ ctx.fillStyle='#e53935'; // шапка
+ ctx.beginPath();ctx.moveTo(-9*S,-16*S);ctx.quadraticCurveTo(0,-30*S,9*S,-16*S);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.fillStyle='#fff';rr(-10*S,-19*S,20*S,5*S,2.5*S);ctx.fill();
+ ctx.beginPath();ctx.arc(11*S,-24*S,3.5*S,0,TAU);ctx.fill();ctx.stroke();
+ ctx.fillStyle='#fff';ctx.beginPath();ctx.ellipse(0,-8*S,9*S,4.5*S,0,Math.PI,0);ctx.fill(); // борода
+ ctx.fillStyle='#222';ctx.beginPath();ctx.arc(-3*S,-14*S,1.3*S,0,TAU);ctx.arc(3*S,-14*S,1.3*S,0,TAU);ctx.fill();
+ ctx.fillStyle='#e05a5a';ctx.beginPath();ctx.arc(0,-11*S,1.6*S,0,TAU);ctx.fill(); // нос
+ // машущая рука
+ ctx.save();ctx.translate(9*S,-4*S);ctx.rotate(-0.6+wave*0.5);
+ ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(12*S,-8*S);ctx.stroke();
+ ctx.fillStyle='#f3e6d8';ctx.beginPath();ctx.arc(13*S,-9*S,3.5*S,0,TAU);ctx.fill();ctx.restore();
+ // вторая рука держит вожжи
+ ctx.beginPath();ctx.moveTo(-8*S,-2*S);ctx.lineTo(-20*S,4*S);ctx.stroke();
+ ctx.restore();
+ ctx.restore();
+}
+/* ================= ЧАСТЬ 3: физика, уровни, игровой цикл ================= */
+
+/* ---------- уровни ---------- */
+const LEVELS=[
+ {n:1,count:10, speed:110,pipeMul:1.6, windPow:0,   gull:false,name:'Тихая ночь'},
+ {n:2,count:50, speed:150,pipeMul:1.15,windPow:0.55,gull:false,name:'Ветреная ночь'},
+ {n:3,count:100,speed:190,pipeMul:0.9, windPow:0.9, gull:true, name:'Ночь чайки'},
+];
+
+/* ---------- частицы ---------- */
+function spark(x,y,col,n,spread){
+ for(let i=0;i<n;i++)parts.push({x,y,vx:R(-spread,spread),vy:R(-spread*1.4,-1),
+  g:0.05,r:R(2,4.5)*S,col,life:1});
+}
+function puff(x,y){
+ for(let i=0;i<8;i++)parts.push({x:x+R(-14,14)*S,y:y+R(-6,6)*S,vx:R(-1,1),vy:R(-1.2,-0.2),
+  g:-0.01,r:R(4,9)*S,col:'rgba(255,255,255,0.9)',life:1});
+}
+function toast(t){toasts.push({text:t,life:2.4});bannerT=1;}
+
+/* ---------- старт уровня ---------- */
+function startLevel(i){
+ levelIdx=i;level=LEVELS[i];
+ bag=level.count;delivered=0;combo=0;stolen=0;
+ gifts=[];parts=[];flyers=[];toasts=[];
+ wind=0;windTarget=0;windTimer=2;scroll=0;
+ spawnHouses();
+ gull={x:W+80,y:H*0.3,active:false,vx:0,vy:0,wob:0,carrying:false,smile:0};
+ state='play';startMusic();
+ toast('Ночь '+level.n+': '+level.name+' — развези '+level.count+' подарков! 🎁');
+}
+function endLevel(){
+ const final=(levelIdx>=LEVELS.length-1);
+ // кнопки «поделиться» — только на финальном экране
+ document.getElementById('tgBtn').style.display=final?'':'none';
+ document.getElementById('maxBtn').style.display=final?'':'none';
+ if(!final){
+  state='between';
+  document.getElementById('win').classList.remove('hide');
+  document.getElementById('winText').innerHTML=
+   'Ночь '+level.n+' завершена! Доставлено: <b>'+delivered+'</b> из '+level.count+
+   '<br>Очки: <b>'+score+'</b>'+(stolen?'<br>Чайка утащила: '+stolen+' 🐦':'');
+  document.getElementById('againBtn').textContent='Следующая ночь →';
+  document.getElementById('againBtn').dataset.next='1';
+ }else{
+  state='win';
+  document.getElementById('win').classList.remove('hide');
+  const best=delivered===level.count;
+  document.getElementById('winText').innerHTML=
+   (best?'Идеальная ночь! Все 100 подарков по трубам! 🏆':'Все три ночи пройдены! 🎉')+
+   '<br>Итоговый счёт: <b>'+score+'</b><br>Доставлено всего: <b>'+
+   (delivered)+' </b> | Утащила чайка: '+stolen+' 🐦<br><br>'+
+   (delivered>150?'Олени просят премию морковкой 🥕🥕🥕':'Коты на крышах передают привет 😼');
+  document.getElementById('againBtn').textContent='Играть заново';
+  document.getElementById('againBtn').dataset.next='';
+ }
+ sfx.fanfare();
+}
+
+/* ---------- сброс подарка ---------- */
+function dropGift(){
+ if(state!=='play'||bag<=0)return;
+ audio();
+ bag--;combo=0;
+ gifts.push({x:sledX,y:H*0.2,vy:2*S,vx:0,spin:0,dead:false});
+ sfx.drop();
+}
+
+/* ---------- попадания ---------- */
+function giftHitsPipe(g){
+ for(const h of houses){
+  const sx=h.x-scroll,p=h.pipe;
+  const px=sx+h.poff,py=groundY-h.h-20*S,topY=py-p.h;
+  const roofY=groundY-h.h;
+  if(g.y+10*S>=topY && g.y<=roofY+8*S &&
+     g.x>px-4*S && g.x<px+p.w+4*S){
+   return h;
+  }
+ }
+ return null;
+}
+
+/* ---------- обновление ---------- */
+function update(dt){
+ // ветер
+ windTimer-=dt;
+ if(windTimer<=0){
+  windTimer=R(2.5,5);
+  windTarget=level.windPow?R(-1,1)*level.windPow:0;
+ }
+ wind=lerp(wind,windTarget,0.02);
+ // прокрутка мира
+ scroll+=level.speed*S*dt/16.7*0.012;
+ // дома: рециклинг
+ for(const h of houses){
+  if(h.x-scroll+h.w<-160*S){h.x=Math.max(...houses.map(o=>o.x))+R(190,320)*S;
+   h.winMode=0;h.winT=0;h.gar=0;
+   h.cat=Math.random()<0.4?{x:R(0.15,0.85),ph:R(0,TAU),panic:0}:null;
+   h.pigeons=Math.random()<0.5?RI(1,3):0;
+  }
+  if(h.winMode>0){h.winT+=dt/16.7;
+   if(h.winMode===1)h.gar=Math.min(1,h.gar+0.05);}
+ }
+ // подарки
+ for(const g of gifts){
+  if(g.dead)continue;
+  g.vy+=0.32*S;g.y+=g.vy;
+  g.x+=wind*1.6*S+g.vx;
+  g.spin+=wind*0.05+0.08;
+  // паника котов и голубей рядом с падающим подарком
+  for(const h of houses){
+   if(h.cat&&h.cat.panic===0){
+    const cx=h.x-scroll+h.w*h.cat.x;
+    if(Math.abs(g.x-cx)<70*S&&g.y>groundY-h.h-160*S&&g.y<groundY-h.h){
+     h.cat.panic=1;sfx.meow();toast('Кот в шоке! 💥');
+     flyers.push({type:'cat',x:cx,y:groundY-h.h-40*S,vx:R(2,4)*S,vy:-R(2,4)*S,rot:0});
+    }
+   }
+   if(h.pigeons>0){
+    const bx=h.x-scroll+h.w*0.75;
+    if(Math.abs(g.x-bx)<80*S&&g.y>groundY-h.h-170*S&&g.y<groundY-h.h){
+     for(let i=0;i<h.pigeons;i++)flyers.push({type:'pigeon',x:bx+i*14*S,
+      y:groundY-h.h-34*S,vx:R(1.5,3.5)*S,vy:-R(2,5)*S,rot:0,ph:R(0,TAU)});
+     h.pigeons=0;sfx.flap();toast('Голуби разлетелись! 🕊️');
+    }
+   }
+  }
+  // чайка крадёт
+  if(level.gull&&gull.active&&!gull.carrying&&Math.abs(g.y-gull.y)<40*S&&Math.abs(g.x-gull.x)<46*S){
+   g.dead=true;gull.carrying=true;gull.smile=1;stolen++;combo=0;
+   sfx.gull();toast('Чайка утащила подарок! Наглая! 🐦💢');
+  }
+  // попадание в трубу
+  const hh=giftHitsPipe(g);
+  if(hh){
+   g.dead=true;delivered++;combo++;
+   const pts=100+combo*20;
+   score+=pts;hh.winMode=1;hh.winT=0;hh.gar=1;
+   const px=hh.x-scroll+hh.poff+hh.pipe.w/2,py=groundY-hh.h-hh.pipe.h-20*S;
+   spark(px,py,'#ffd23e',14,4*S);spark(px,py,'#ff7043',8,3*S);
+   sfx.hit();toast('Красота! +'+pts+' очков 🎄'+(combo>2?' (серия x'+combo+'!)':''));
+  }
+  // промах: крыша
+  else{
+   for(const h of houses){
+    const sx=h.x-scroll;
+    if(g.y>=groundY-h.h-6*S&&g.y<groundY-4*S&&g.x>sx-6*S&&g.x<sx+h.w+6*S){
+     g.dead=true;puff(g.x,groundY-h.h);shake=8;sfx.miss();
+     h.winMode=2;h.winT=0;
+     toast(pick(['Подарок в сугробе… найдут весной 🙈','Мимо! Окно погасло 😢',
+      'Почти! Труба обиделась 💢']));
+     break;
+    }
+   }
+   if(!g.dead&&g.y>groundY+6*S){g.dead=true;puff(g.x,groundY);shake=5;sfx.miss();
+    toast(pick(['Прямо в снег! 🥶','Сугроб доволен, окно нет 😅']));}
+  }
+ }
+ gifts=gifts.filter(g=>!g.dead);
+ // чайка (3 ночь)
+ if(level.gull){
+  if(!gull.active&&Math.random()<0.01)spawnGull();
+  if(gull.active){
+   gull.x+=gull.vx;
+   if(gull.carrying){gull.y-=2.2*S;
+    if(gull.y<-60){gull.active=false;gull.carrying=false;}}
+   if(gull.x<-80){gull.active=false;
+    setTimeout(()=>{if(state==='play'&&level.gull)spawnGull();},R(1500,4000));}
+  }
+ }
+ // улетающие коты и голуби
+ for(const f of flyers){f.x+=f.vx;f.y+=f.vy;f.rot+=0.1;
+  if(f.type==='pigeon')f.y+=Math.sin(tm*10+f.ph)*1.5;}
+ flyers=flyers.filter(f=>f.y>-80&&f.x<W+120);
+ // частицы
+ for(const p of parts){p.x+=p.vx;p.y+=p.vy;p.vy+=p.g;p.life-=0.02;}
+ parts=parts.filter(p=>p.life>0);
+ // тосты
+ for(const t of toasts)t.life-=dt/60;
+ toasts=toasts.filter(t=>t.life>0);
+ shake=Math.max(0,shake-0.6);
+ // конец уровня: подарки кончились и всё упало
+ if(bag<=0&&gifts.length===0&&state==='play')endLevel();
+}
+
+/* ---------- отрисовка кадра ---------- */
+function draw(){
+ ctx.save();
+ if(shake>0)ctx.translate(R(-shake,shake),R(-shake,shake));
+ drawSky();drawParallax();
+ // земля
+ ctx.fillStyle='#eef4ff';ctx.fillRect(0,groundY,W,H-groundY);
+ ctx.fillStyle='#dde8ff';ctx.fillRect(0,groundY+8*S,W,H-groundY);
+ const sorted=[...houses].sort((a,b)=>a.x-b.x);
+ for(const h of sorted)drawHouse(h);
+ for(const h of sorted){drawCat(h);drawPigeons(h);}
+ for(const f of flyers){
+  ctx.save();ctx.translate(f.x,f.y);ctx.rotate(f.rot||0);
+  if(f.type==='cat'){ctx.font=(14*S)+'px Comic Sans MS';ctx.fillText('🐈',-8*S,6*S);}
+  else{ctx.font=(13*S)+'px Comic Sans MS';ctx.fillText('🕊️',-8*S,6*S);}
+  ctx.restore();
+ }
+ drawGull();
+ // подарки
+ for(const g of gifts){
+  ctx.save();ctx.translate(g.x,g.y);ctx.rotate(Math.sin(g.spin)*0.4);
+  ctx.fillStyle='#e53935';ctx.strokeStyle='rgba(60,10,10,0.9)';ctx.lineWidth=2.2*S;
+  rr(-13*S,-10*S,26*S,20*S,4*S);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#ffd23e';ctx.fillRect(-13*S,-2.5*S,26*S,5*S);
+  ctx.fillRect(-2.5*S,-10*S,5*S,20*S);
+  ctx.beginPath();ctx.arc(0,-10*S,4*S,0,TAU);ctx.fill();
+  ctx.restore();
+ }
+ for(const p of parts){ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.col;
+  ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.fill();}
+ ctx.globalAlpha=1;
+ drawSled();
+ ctx.restore();
+ drawHUD();
+}
+
+/* ---------- HUD ---------- */
+function drawHUD(){
+ if(!level)return;
+ ctx.font='bold '+Math.round(15*S+6)+'px Comic Sans MS, sans-serif';
+ ctx.fillStyle='rgba(10,14,50,0.55)';
+ rr(10*S+8,10*S+26,Math.min(W-120,300*S),30*S,10*S);ctx.fill();
+ ctx.fillStyle='#fff';
+ ctx.fillText('🎁 осталось: '+bag+'  ✅ доставлено: '+delivered+'  ⭐ '+score,22,32*S+22);
+ if(level.windPow>0){
+  const w=clamp(wind,-1,1);
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.fillText(wind>0.12?' ветер ▶ '+['','слабый','крепкий','ШТОРМ!'][Math.min(3,Math.ceil(Math.abs(w)*3))]:
+   wind<-0.12?' ◀ ветер '+['','слабый','крепкий','ШТОРМ!'][Math.min(3,Math.ceil(Math.abs(w)*3))]:' ветер штиль ✨',W/2-70*S,36*S);
+ }
+ // тосты
+ toasts.forEach((t,i)=>{
+  ctx.globalAlpha=Math.min(1,t.life);
+  ctx.font='bold '+Math.round(13*S+5)+'px Comic Sans MS, sans-serif';
+  ctx.textAlign='center';
+  ctx.fillStyle='rgba(10,14,50,0.7)';
+  const ty=H*0.32+i*30*S;
+  const tw=ctx.measureText(t.text).width+24*S;
+  rr(W/2-tw/2,ty-20*S,tw,28*S,12*S);ctx.fill();
+  ctx.fillStyle='#ffe9a8';ctx.fillText(t.text,W/2,ty);
+  ctx.textAlign='left';ctx.globalAlpha=1;
+ });
+}
+
+/* ---------- ввод ---------- */
+let pointerX=null;
+function onTap(e){
+ if(e.target&&e.target.closest&&e.target.closest('.ov,button,a'))return;
+ e.preventDefault();
+ const t=e.touches?e.touches[0]:e;
+ pointerX=t.clientX;audio();
+ if(state==='play')dropGift();
+}
+addEventListener('touchstart',onTap,{passive:false});
+addEventListener('mousedown',onTap);
+addEventListener('touchmove',e=>{e.preventDefault();
+ pointerX=e.touches?e.touches[0].clientX:null;},{passive:false});
+addEventListener('mousemove',e=>{if(e.buttons)pointerX=e.clientX;});
+
+/* ---------- кнопки экранов ---------- */
+document.getElementById('startBtn').addEventListener('click',e=>{
+ e.stopPropagation();audio();
+ document.getElementById('menu').classList.add('hide');
+ startLevel(0);
+});
+document.getElementById('againBtn').addEventListener('click',e=>{
+ e.stopPropagation();
+ const goNext=e.currentTarget.dataset.next==='1';
+ document.getElementById('win').classList.add('hide');
+ startLevel(goNext?levelIdx+1:0);
+});
+
+/* ---------- поделиться результатом ---------- */
+const GAME_URL='https://ваш-логин.github.io/игра/';   // ← адрес игры на GitHub Pages
+const TG_GROUP='https://t.me/rollexpresskamchatka';  // ← ссылка на вашу группу Telegram
+const MAX_GROUP='https://web.max.ru/-70889239958868';   // ← ссылка на ваш канал в MAX
+
+document.getElementById('tgBtn').addEventListener('click',e=>{
+ e.stopPropagation();
+ const text='Я доставил '+delivered+' подарков и набрал '+score+
+  ' очков в Дед Мороз от Ролл-Экспресс! Побьёшь мой рекорд? 🎅 '+TG_GROUP;
+ location.href='https://t.me/share/url?url='+encodeURIComponent(GAME_URL)+
+  '&text='+encodeURIComponent(text);
+});
+document.getElementById('maxBtn').addEventListener('click',e=>{
+ e.stopPropagation();
+ const text='Я доставил '+delivered+' подарков и набрал '+score+
+  ' очков в Дед Мороз от Ролл-Экспресс! Побьёшь мой рекорд? 🎅 '+GAME_URL+' | Группа: '+MAX_GROUP;
+ location.href='https://max.ru/:share?text='+encodeURIComponent(text);
+});
+
+/* ---------- главный цикл ---------- */
+function loop(ts){
+ const dt=Math.min(50,ts-last);last=ts;tm+=dt/1000;
+ if(state==='play')update(dt);
+ else{ // на экранах мир всё равно тихо живёт
+  scroll+=(state==='menu'?40:10)*S*dt/16.7*0.012;
+  tm+=0;
+  for(const h of houses)if(h.winMode>0)h.winT+=dt/16.7;
+ }
+ if(state!=='menu'||houses.length===0)draw();
+ else{drawSky();drawParallax();
+  ctx.fillStyle='#eef4ff';ctx.fillRect(0,groundY,W,H-groundY);}
+ requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
