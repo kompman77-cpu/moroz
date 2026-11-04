@@ -135,6 +135,12 @@ function startMusic(){
   const f=MELODY[step%MELODY.length];
   if(f)bell(f,0.05,0.5);
   if(step%8===0)tone(step%16===0?196:262,0.4,'triangle',0.045);
+  // второй бас — отвечает на основной
+  if(step%8===4)tone(step%16===4?155:233,0.35,'triangle',0.04);
+  // мягкий аккорд-подложка для объёма
+  if(step%16===8){tone(262,1.4,'sine',0.03);tone(330,1.4,'sine',0.025);tone(392,1.4,'sine',0.025);}
+  // тихий шейкер на слабые доли — добавляет ритм
+  if(step%2===1)noise(0.05,0.028,5200);
   step++;
  },300);
 }
@@ -535,7 +541,7 @@ function puff(x,y){
  for(let i=0;i<8;i++)parts.push({x:x+R(-14,14)*S,y:y+R(-6,6)*S,vx:R(-1,1),vy:R(-1.2,-0.2),
   g:-0.01,r:R(4,9)*S,col:'rgba(255,255,255,0.9)',life:1});
 }
-function toast(t){toasts.push({text:t,life:2.4});bannerT=1;}
+function toast(t){toasts.push({text:t,life:3.5});bannerT=1;}
 
 /* ---------- старт уровня ---------- */
 function startLevel(i){
@@ -695,7 +701,7 @@ function update(dt){
  for(const p of parts){p.x+=p.vx;p.y+=p.vy;p.vy+=p.g;p.life-=0.02;}
  parts=parts.filter(p=>p.life>0);
  // тосты
- for(const t of toasts)t.life-=dt/60;
+ for(const t of toasts)t.life-=dt/1000;
  toasts=toasts.filter(t=>t.life>0);
  shake=Math.max(0,shake-0.6);
  // конец уровня: подарки кончились и всё упало
